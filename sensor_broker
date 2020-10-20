@@ -1,0 +1,138 @@
+#!/usr/bin/python3
+
+import datetime
+import pprint
+import yaml
+import paho.mqtt.client as paho
+from flask import Flask
+from flask import Response
+from flask import request
+app = Flask(__name__)
+
+""" Get MQTT client object as global variable to make it available everywhere.
+Used by HomeAssistant to get values """
+MQTT_CLIENT = paho.Client("sensor-broker")
+
+""" dict of all the sensor data we have"""
+DATA = {}
+
+""" path to a yaml export of data fro HomeAssistant to read from """
+YAML_PATH = "/home/homeassistant/sensor_broker.yaml"
+
+""" default refresh rate of a sensor unless provided by sensor itself. In seconds """
+default_refresh_rate = 5*60
+
+""" maps sensor IP to room names """
+room_mapping = {
+        "192.168.1.3": "bordelarna",
+        "192.168.1.4": "balkon",
+        "192.168.1.5": "obyvak",
+        "192.168.1.6": "kuchyne",
+        "192.168.1.7": "loznice",
+        }
+
+""" Ping """
+@app.route('/')
+def root():
+    return "OK"
+
+""" Dump all cached data for debugging"""
+@app.route('/dump_data')
+def dump_data():
+    global DATA
+    return pprint.pformat(DATA)
+
+""" Endpoint for sensors to upload data """
+@app.route("/sensor", methods=["GET"])
+def grafana_search():
+    global DATA
+    sensor_ip = request.remote_addr
+    new_sensor = False
+    try:
+        room = room_mapping[sensor_ip]
+    except:
+        room = "Unknown"
+    if not sensor_ip in DATA.keys():
+        new_sensor = True
+        DATA[sensor_ip] = {}
+        DATA[sensor_ip]["property"] = {}
+        DATA[sensor_ip]["room"] = room
+    DATA[sensor_ip]["timestamp"] = datetime.datetime.now()
+    try:
+        DATA[sensor_ip]["refresh_rate"] = int(request.args["refresh_rate"])
+    except KeyError:
+        DATA[sensor_ip]["refresh_rate"] = default_refresh_rate
+    for (k ,v) in request.args.items():
+        # skip meta properties
+        if k in ("refresh_rate"):
+            continue
+        DATA[sensor_ip]["property"][k] = v
+        mqtt_publish(room=room, property=k, value=v)
+        app.logger.info("sensor {}: {} = {}\n".format(sensor_ip, k, v))
+    if new_sensor:
+        yaml_export_generate()
+    return "OK"
+
+""" Prometheus endpoint"""
+@app.route('/metrics')
+def prometheus_metrics():
+    def generate_response(DATA):
+        known_targets = []
+        # number of sensors that have data older than 2x their refresh_rate
+        stale_sensors = 0
+        for sensor_ip in DATA:
+            if (datetime.datetime.now() - DATA[sensor_ip]["timestamp"]).total_seconds() > 2 * DATA[sensor_ip]["refresh_rate"]:
+                if DATA[sensor_ip]["room"] is not "Unknown":
+                    stale_sensors += 1
+                    app.logger.warning("stale sensor: {}".format(sensor_ip))
+            else:
+                for prop in DATA[sensor_ip]["property"]:
+                    target_name = "sensor_{}".format(prop)
+                    if not target_name in known_targets:
+                        yield "# TYPE {} gauge\n".format(target_name)
+                        known_targets.append(target_name)
+                    yield """{target_name}{{ip="{ip}" room="{room}" }} {value}\n""".format(
+                            target_name = target_name,
+                            ip = sensor_ip,
+                            room = DATA[sensor_ip]["room"],
+                            value = DATA[sensor_ip]["property"][prop])
+        yield "# TYPE sensor_stale gauge\n"
+        yield "sensor_stale {}\n".format(stale_sensors)
+    return Response(generate_response(DATA), mimetype='text/plain')
+
+""" pusblish (send) fresh data to MQTT broker """
+def mqtt_publish(room, property, value):
+    topic = "home/" + room + "/" + property
+    MQTT_CLIENT.subscribe(topic)
+    MQTT_CLIENT.publish(topic,value)
+
+""" regenerate yaml export for HomeAssistant (HA) """
+def yaml_export_generate():
+    # create data structure for HA to accept
+    data_ha = []
+    # HA is in czech so we need to translate terms
+    trans = {
+            "temperature" : "teplota",
+            "humidity"    : "vlhkost",
+            "RSSI"        : "WIFI signal",
+            "voltage"     : "napeti baterie"
+            }
+    for sensor in DATA:
+        for prop in DATA[sensor]["property"]:
+            data_ha_property = {"platform":"mqtt"}
+            try:
+                prop_trans = trans[prop]
+            except:
+                prop_trans = prop
+            data_ha_property["name"] = DATA[sensor]["room"] + " " + prop_trans
+            topic = "home/" + DATA[sensor]["room"] + "/" + prop
+            data_ha_property["state_topic"] = topic
+            data_ha_property["unique_id"] = topic
+            data_ha.append(data_ha_property)
+    with open(YAML_PATH, 'w') as file:
+        output = yaml.dump(data_ha, file, default_flow_style=False)
+
+if __name__ == '__main__':
+    MQTT_CLIENT.connect("127.0.0.1")
+    MQTT_CLIENT.loop_start()
+    app.run(host='0.0.0.0', port=7890)

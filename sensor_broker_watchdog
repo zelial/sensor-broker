@@ -1,0 +1,27 @@
+#!/bin/bash
+
+
+# run the broker
+function spawn(){
+    /usr/local/bin/sensor_broker & 
+    PID="$!"
+    sleep 1
+    systemd-notify --ready
+}
+
+spawn
+# test that it responds, notify systemd all is fine
+# NOTE: disabling relying on SD watchdog as it was triggering even when notified
+while true ; do
+    RESPONSE=$(timeout 5 wget -O - localhost:7890 2>/dev/null)
+    ECODE=$?
+    if [[ "$ECODE" = 0 && "$RESPONSE" = "OK" ]] ; then
+        systemd-notify --pid="$PID" WATCHDOG=1 STATUS="watchdog update: $(date -Iseconds)"
+    else
+        echo "watchdog FAILED: ECODE=$ECODE RESPONSE=$RESPONSE"
+        #systemd-notify --pid="$PID" WATCHDOG=trigger
+        kill -9 "$PID"
+        spawn
+    fi
+    sleep 120
+done
