@@ -157,7 +157,7 @@ def get_persistent_prop(prop):
     if len(PERSISTENT_PROP) == 0:
         with open(PERSISTENT_PROP_PATH) as file:
             PERSISTENT_PROP = yaml.load(file)
-            print("loading persistent properties: " + PERSISTENT_PROP)
+            print("loading persistent properties: " + str(PERSISTENT_PROP))
     return int(PERSISTENT_PROP[prop])
 
 
