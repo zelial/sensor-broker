@@ -17,9 +17,14 @@ MQTT_CLIENT = paho.Client("sensor-broker")
 DATA = {}
 
 """ path to a yaml export of data fro HomeAssistant to read from """
-YAML_PATH = "/home/homeassistant/sensor_broker.yaml"
+HA_EXPORT_PATH = "/home/homeassistant/sensor_broker.yaml"
 
-""" default refresh rate of a sensor unless provided by sensor itself. In seconds """
+""" Where to store persistent properties """
+PERSISTENT_PROP_PATH = "/var/lib/sensor_broker/persistent_properties"
+PERSISTENT_PROP = {}
+
+""" default refresh rate of a sensor unless provided by sensor itself.
+    In seconds """
 default_refresh_rate = 5*60
 
 """ maps sensor IP to room names """
@@ -36,11 +41,13 @@ room_mapping = {
 def root():
     return "OK"
 
+
 """ Dump all cached data for debugging"""
 @app.route('/dump_data')
 def dump_data():
     global DATA
     return pprint.pformat(DATA)
+
 
 """ Endpoint for sensors to upload data """
 @app.route("/sensor", methods=["GET"])
@@ -50,9 +57,9 @@ def grafana_search():
     new_sensor = False
     try:
         room = room_mapping[sensor_ip]
-    except:
+    except KeyError:
         room = "Unknown"
-    if not sensor_ip in DATA.keys():
+    if sensor_ip not in DATA.keys():
         new_sensor = True
         DATA[sensor_ip] = {}
         DATA[sensor_ip]["property"] = {}
@@ -62,13 +69,18 @@ def grafana_search():
         DATA[sensor_ip]["refresh_rate"] = int(request.args["refresh_rate"])
     except KeyError:
         DATA[sensor_ip]["refresh_rate"] = default_refresh_rate
-    for (k ,v) in request.args.items():
+    for (prop, value) in request.args.items():
         # skip meta properties
-        if k in ("refresh_rate"):
+        if prop in ("refresh_rate"):
             continue
-        DATA[sensor_ip]["property"][k] = v
-        mqtt_publish(room=room, property=k, value=v)
-        app.logger.info("sensor {}: {} = {}\n".format(sensor_ip, k, v))
+        # turn relative value of the water meter property
+        # into absolute by adding to the persistent baseline
+        if sensor_ip == "192.168.1.8" and prop == "cold_water":
+            value = int(value) + get_persistent_prop("cold_water")
+            set_persistent_prop("cold_water", value)
+        DATA[sensor_ip]["property"][prop] = value
+        mqtt_publish(room=room, property=prop, value=value)
+        app.logger.info("sensor {}: {} = {}\n".format(sensor_ip, prop, value))
     if new_sensor:
         yaml_export_generate()
     return "OK"
@@ -82,11 +94,14 @@ def prometheus_metrics():
         stale_sensors = 0
         for sensor_ip in DATA:
             if (datetime.datetime.now() - DATA[sensor_ip]["timestamp"]).total_seconds() > 2 * DATA[sensor_ip]["refresh_rate"]:
-                if DATA[sensor_ip]["room"] is not "Unknown":
+                if DATA[sensor_ip]["room"] != "Unknown":
                     stale_sensors += 1
                     app.logger.warning("stale sensor: {}".format(sensor_ip))
             else:
                 for prop in DATA[sensor_ip]["property"]:
+                    # ignore debugging properties
+                    if prop[:6] == "debug_":
+                        continue
                     target_name = "sensor_{}".format(prop)
                     if not target_name in known_targets:
                         yield "# TYPE {} gauge\n".format(target_name)
@@ -119,6 +134,9 @@ def yaml_export_generate():
             }
     for sensor in DATA:
         for prop in DATA[sensor]["property"]:
+            # ignore debugging properties
+            if prop[:6] == "debug_":
+                continue
             data_ha_property = {"platform":"mqtt"}
             try:
                 prop_trans = trans[prop]
@@ -129,8 +147,26 @@ def yaml_export_generate():
             data_ha_property["state_topic"] = topic
             data_ha_property["unique_id"] = topic
             data_ha.append(data_ha_property)
-    with open(YAML_PATH, 'w') as file:
+    with open(HA_EXPORT_PATH, 'w') as file:
         output = yaml.dump(data_ha, file, default_flow_style=False)
+
+
+def get_persistent_prop(prop):
+    global PERSISTENT_PROP
+    # empty -> load from disk
+    if len(PERSISTENT_PROP) == 0:
+        with open(PERSISTENT_PROP_PATH) as file:
+            PERSISTENT_PROP = yaml.load(file)
+            print("loading persistent properties: " + PERSISTENT_PROP)
+    return int(PERSISTENT_PROP[prop])
+
+
+def set_persistent_prop(prop, value):
+    global PERSISTENT_PROP
+    PERSISTENT_PROP[prop] = value
+    with open(PERSISTENT_PROP_PATH, 'w') as file:
+        yaml.dump(PERSISTENT_PROP, file, default_flow_style=False)
+
 
 if __name__ == '__main__':
     MQTT_CLIENT.connect("127.0.0.1")
