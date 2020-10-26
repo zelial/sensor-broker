@@ -80,7 +80,7 @@ def grafana_search():
             set_persistent_prop("cold_water", value)
         DATA[sensor_ip]["property"][prop] = value
         mqtt_publish(room=room, property=prop, value=value)
-        app.logger.info("sensor {}: {} = {}\n".format(sensor_ip, prop, value))
+        print("sensor {}: {} = {}\n".format(sensor_ip, prop, value))
     if new_sensor:
         yaml_export_generate()
     return "OK"
@@ -96,7 +96,7 @@ def prometheus_metrics():
             if (datetime.datetime.now() - DATA[sensor_ip]["timestamp"]).total_seconds() > 2 * DATA[sensor_ip]["refresh_rate"]:
                 if DATA[sensor_ip]["room"] != "Unknown":
                     stale_sensors += 1
-                    app.logger.warning("stale sensor: {}".format(sensor_ip))
+                    print("stale sensor: {}".format(sensor_ip))
             else:
                 for prop in DATA[sensor_ip]["property"]:
                     # ignore debugging properties
