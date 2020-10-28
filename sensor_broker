@@ -85,59 +85,80 @@ def grafana_search():
         yaml_export_generate()
     return "OK"
 
-""" Prometheus endpoint"""
+
 @app.route('/metrics')
 def prometheus_metrics():
+    """ Prometheus endpoint"""
     def generate_response(DATA):
         known_targets = []
         # number of sensors that have data older than 2x their refresh_rate
-        stale_sensors = 0
+        unreachable_sensors = get_unreachable_sensors()
         for sensor_ip in DATA:
-            if (datetime.datetime.now() - DATA[sensor_ip]["timestamp"]).total_seconds() > 2 * DATA[sensor_ip]["refresh_rate"]:
-                if DATA[sensor_ip]["room"] != "Unknown":
-                    stale_sensors += 1
-                    print("stale sensor: {}".format(sensor_ip))
+            if sensor_ip in unreachable_sensors:
+               continue
             else:
                 for prop in DATA[sensor_ip]["property"]:
                     # ignore debugging properties
                     if prop[:6] == "debug_":
                         continue
                     target_name = "sensor_{}".format(prop)
-                    if not target_name in known_targets:
+                    if target_name not in known_targets:
                         yield "# TYPE {} gauge\n".format(target_name)
                         known_targets.append(target_name)
                     yield """{target_name}{{ip="{ip}" room="{room}" }} {value}\n""".format(
-                            target_name = target_name,
-                            ip = sensor_ip,
-                            room = DATA[sensor_ip]["room"],
-                            value = DATA[sensor_ip]["property"][prop])
-        yield "# TYPE sensor_stale gauge\n"
-        yield "sensor_stale {}\n".format(stale_sensors)
+                        target_name=target_name,
+                        ip=sensor_ip,
+                        room=DATA[sensor_ip]["room"],
+                        value=DATA[sensor_ip]["property"][prop])
+        yield "# TYPE sensor_unreachable gauge\n"
+        yield "sensor_unreachable {}\n".format(len(unreachable_sensors))
     return Response(generate_response(DATA), mimetype='text/plain')
 
-""" pusblish (send) fresh data to MQTT broker """
+
+@app.route('/unreachable_sensors')
+def unreachable_sensors():
+    """ List unreachable sensors for easy debugging"""
+    unreachable_sensors_ips = get_unreachable_sensors()
+    unreachable_sensors_data = {}
+    for sensor_ip in unreachable_sensors_ips:
+        unreachable_sensors_data[sensor_ip] = DATA[sensor_ip]
+    return pprint.pformat(unreachable_sensors_data)
+
+
+def get_unreachable_sensors():
+    """ return list of IPs of unreachable sensors = 
+    sensors that have data oler than 2x their refresh rate """
+    unreachable_sensors_ips = []
+    for sensor_ip in DATA:
+        if (datetime.datetime.now() - DATA[sensor_ip]["timestamp"]).total_seconds() > 2 * DATA[sensor_ip]["refresh_rate"]:
+            unreachable_sensors_ips.append(sensor_ip)
+    return unreachable_sensors_ips
+
+
 def mqtt_publish(room, property, value):
+    """ publish (send) fresh data to MQTT broker """
     topic = "home/" + room + "/" + property
     MQTT_CLIENT.subscribe(topic)
-    MQTT_CLIENT.publish(topic,value)
+    MQTT_CLIENT.publish(topic, value)
 
-""" regenerate yaml export for HomeAssistant (HA) """
+
 def yaml_export_generate():
+    """ regenerate yaml export for HomeAssistant (HA) """
     # create data structure for HA to accept
     data_ha = []
     # HA is in czech so we need to translate terms
     trans = {
-            "temperature" : "teplota",
-            "humidity"    : "vlhkost",
-            "RSSI"        : "WIFI signal",
-            "voltage"     : "napeti baterie"
-            }
+        "temperature": "teplota",
+        "humidity"   : "vlhkost",
+        "RSSI"       : "WIFI signal",
+        "voltage"    : "napeti baterie"
+        }
     for sensor in DATA:
         for prop in DATA[sensor]["property"]:
             # ignore debugging properties
             if prop[:6] == "debug_":
                 continue
-            data_ha_property = {"platform":"mqtt"}
+            data_ha_property = {"platform": "mqtt"}
             try:
                 prop_trans = trans[prop]
             except:
@@ -148,10 +169,11 @@ def yaml_export_generate():
             data_ha_property["unique_id"] = topic
             data_ha.append(data_ha_property)
     with open(HA_EXPORT_PATH, 'w') as file:
-        output = yaml.dump(data_ha, file, default_flow_style=False)
+        yaml.dump(data_ha, file, default_flow_style=False)
 
 
 def get_persistent_prop(prop):
+    """ returns value of a persistent property """
     global PERSISTENT_PROP
     # empty -> load from disk
     if len(PERSISTENT_PROP) == 0:
@@ -162,6 +184,7 @@ def get_persistent_prop(prop):
 
 
 def set_persistent_prop(prop, value):
+    """ set value of a persistent property """
     global PERSISTENT_PROP
     PERSISTENT_PROP[prop] = value
     with open(PERSISTENT_PROP_PATH, 'w') as file:
