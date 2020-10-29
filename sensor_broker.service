@@ -3,12 +3,12 @@ Description=SmartHome sensor-prometheus broker
 After=basic.target network.target
 
 [Service]
-Type=notify
+Type=simple
 User=prometheus
 Group=prometheus
 ExecStart=/usr/local/bin/sensor_broker_watchdog
 Restart=always
-NotifyAccess=all
+#NotifyAccess=all
 #WatchdogSec=300
 
 [Install]

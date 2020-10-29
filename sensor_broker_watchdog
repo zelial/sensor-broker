@@ -6,7 +6,7 @@ function spawn(){
     /usr/local/bin/sensor_broker & 
     PID="$!"
     sleep 1
-    systemd-notify --ready
+    #systemd-notify --ready
 }
 
 spawn
