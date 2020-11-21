@@ -34,6 +34,7 @@ room_mapping = {
         "192.168.1.5": "obyvak",
         "192.168.1.6": "kuchyne",
         "192.168.1.7": "loznice",
+        "192.168.1.8": "zachod",
         }
 
 """ Ping """
@@ -78,6 +79,9 @@ def grafana_search():
         if sensor_ip == "192.168.1.8" and prop == "cold_water":
             value = int(value) + get_persistent_prop("cold_water")
             set_persistent_prop("cold_water", value)
+        if sensor_ip == "192.168.1.8" and prop == "hot_water":
+            value = int(value) + get_persistent_prop("hot_water")
+            set_persistent_prop("hot_water", value)
         DATA[sensor_ip]["property"][prop] = value
         mqtt_publish(room=room, property=prop, value=value)
         print("sensor {}: {} = {}\n".format(sensor_ip, prop, value))
@@ -98,9 +102,6 @@ def prometheus_metrics():
                continue
             else:
                 for prop in DATA[sensor_ip]["property"]:
-                    # ignore debugging properties
-                    if prop[:6] == "debug_":
-                        continue
                     target_name = "sensor_{}".format(prop)
                     if target_name not in known_targets:
                         yield "# TYPE {} gauge\n".format(target_name)
