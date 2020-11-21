@@ -92,24 +92,35 @@ def grafana_search():
 
 @app.route('/metrics')
 def prometheus_metrics():
-    """ Prometheus endpoint"""
+    """ Prometheus endpoint
+    Each property becomes a prometheus metric. If name contains __ what
+    follows will be used as label"""
     def generate_response(DATA):
         known_targets = []
         # number of sensors that have data older than 2x their refresh_rate
         unreachable_sensors = get_unreachable_sensors()
         for sensor_ip in DATA:
             if sensor_ip in unreachable_sensors:
-               continue
+                continue
             else:
                 for prop in DATA[sensor_ip]["property"]:
-                    target_name = "sensor_{}".format(prop)
-                    if target_name not in known_targets:
-                        yield "# TYPE {} gauge\n".format(target_name)
-                        known_targets.append(target_name)
-                    yield """{target_name}{{ip="{ip}" room="{room}" }} {value}\n""".format(
-                        target_name=target_name,
+                    label_string = ""
+                    if "__" in prop:
+                        metric_name = "sensor_{}".format(prop.split("--")[0])
+                        for label in prop.split("--")[1:]:
+                            label_name = label.split("_")[0]
+                            label_value = label.split("_")[1]
+                            label_string += """ {0}="{1}" """.format(label_name, label_value)
+                    else:
+                        metric_name = "sensor_{}".format(prop)
+                    if metric_name not in known_targets:
+                        yield "# TYPE {} gauge\n".format(metric_name)
+                        known_targets.append(metric_name)
+                    yield """{metric_name}{{ip="{ip}" room="{room}" {label_string} }} {value}\n""".format(
+                        metric_name=metric_name,
                         ip=sensor_ip,
                         room=DATA[sensor_ip]["room"],
+                        label_string=label_string,
                         value=DATA[sensor_ip]["property"][prop])
         yield "# TYPE sensor_unreachable gauge\n"
         yield "sensor_unreachable {}\n".format(len(unreachable_sensors))
