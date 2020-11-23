@@ -1,5 +1,6 @@
 #!/usr/bin/python3
 
+import subprocess
 import datetime
 import pprint
 import yaml
@@ -76,10 +77,10 @@ def grafana_search():
             continue
         # turn relative value of the water meter property
         # into absolute by adding to the persistent baseline
-        if sensor_ip == "192.168.1.8" and prop == "cold_water":
+        if sensor_ip == "192.168.1.8" and prop == "water__type_cold":
             value = int(value) + get_persistent_prop("cold_water")
             set_persistent_prop("cold_water", value)
-        if sensor_ip == "192.168.1.8" and prop == "hot_water":
+        if sensor_ip == "192.168.1.8" and prop == "water__type_hot":
             value = int(value) + get_persistent_prop("hot_water")
             set_persistent_prop("hot_water", value)
         DATA[sensor_ip]["property"][prop] = value
@@ -106,8 +107,8 @@ def prometheus_metrics():
                 for prop in DATA[sensor_ip]["property"]:
                     label_string = ""
                     if "__" in prop:
-                        metric_name = "sensor_{}".format(prop.split("--")[0])
-                        for label in prop.split("--")[1:]:
+                        metric_name = "sensor_{}".format(prop.split("__")[0])
+                        for label in prop.split("__")[1:]:
                             label_name = label.split("_")[0]
                             label_value = label.split("_")[1]
                             label_string += """ {0}="{1}" """.format(label_name, label_value)
@@ -146,6 +147,22 @@ def get_unreachable_sensors():
             unreachable_sensors_ips.append(sensor_ip)
     return unreachable_sensors_ips
 
+
+@app.route('/notify', methods=["GET"])
+def notify():
+    """ Immediately notify on telegram"""
+    message = request.args["message"]
+    p = subprocess.run([
+        "curl",
+        "-s",
+        "--form",
+        """text="{0}" """.format(message),
+        "--form-string",
+        "chat_id=CHATID",
+        "https://api.telegram.org/botAPITOKEN/sendMessage"],
+      stdout=subprocess.PIPE,
+      stderr=subprocess.PIPE)
+    return p.stdout + p.stderr
 
 def mqtt_publish(room, property, value):
     """ publish (send) fresh data to MQTT broker """
