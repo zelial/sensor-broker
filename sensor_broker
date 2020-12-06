@@ -36,6 +36,7 @@ room_mapping = {
         "192.168.1.6": "kuchyne",
         "192.168.1.7": "loznice",
         "192.168.1.8": "zachod",
+        "192.168.1.9": "koupelna",
         }
 
 """ Ping """
