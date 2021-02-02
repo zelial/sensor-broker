@@ -31,7 +31,7 @@ default_refresh_rate = 5*60
 """ maps sensor IP to room names """
 room_mapping = {
         "192.168.1.3": "detsky",
-        "192.168.1.4": "balkon",
+        "192.168.1.4": "kuchyne",
         "192.168.1.5": "obyvak",
         "192.168.1.6": "kuchyne",
         "192.168.1.7": "loznice",
