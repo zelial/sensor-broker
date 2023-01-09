@@ -1,6 +1,6 @@
 [Unit]
 Description=SmartHome sensor-prometheus broker
-After=basic.target network.target
+After=basic.target network.target mosquitto.service
 
 [Service]
 Type=simple
